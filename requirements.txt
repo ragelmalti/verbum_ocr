@@ -3,3 +3,5 @@ pymupdf
 requests
 python-dotenv
 google-genai
+openai
+vllm

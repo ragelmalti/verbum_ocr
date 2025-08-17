@@ -14,18 +14,21 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import pymupdf  # PyMuPDF, used to be called fitz
 from dotenv import load_dotenv
 
+# LLM Library Imports
 import google.genai as genai
 from google.genai import types
+from openai import AsyncOpenAI
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--outname_name", help="Name of the output files", type=str, required=True)
+parser.add_argument("--output_name", help="Name of the output files", type=str, required=True)
+parser.add_argument("--model_name", help="Name of the model to be used", type=str, required=True)
 parser.add_argument("pdf_input", help="PDF input to perform OCR on", type=str)
 args = parser.parse_args()
 
 # READ DOTENV FILE
 load_dotenv(dotenv_path="config.env")
 
-required_vars = ["PROMPT_DIR"]
+required_vars = ["PROMPT_DIR", "LLM_BASE_URL", "LLM_API_KEY"]
 
 def check_required_vars(vars_list):
     for var in vars_list:
@@ -43,6 +46,8 @@ def read_file(file_path):
 
 PROMPT = read_file(os.getenv("PROMPT_DIR"))
 GOOGLE_GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL")
+LLM_API_KEY = os.getenv("LLM_API_KEY")
 
 # LOGGING CONFIGURATION - CODE ADAPTED FROM Yigit Konur
 def setup_logging() -> logging.Logger:
@@ -209,6 +214,49 @@ async def call_gemini(args: Tuple[int, str], model: str, prompt: str) -> Tuple[i
     
     return False
 
+async def call_vllm(args: Tuple[int, str], model: str, prompt: str) -> Tuple[int, str]:
+    """
+    Call model hosted on vLLM
+    Using the OpenAI Python library to call locally hosted models
+    """
+    # DO ERROR CHECKING TO ENSURE THAT MODEL IS IN MODELS!
+    page_num, page_image_base64 = args
+    
+    image_part = types.Part.from_bytes(
+        data=base64.b64decode(page_image_base64),
+        mime_type="image/png"
+    )
+    
+    # Asynchronous code adapted from:
+    # https://github.com/google-gemini/cookbook/blob/main/quickstarts/Asynchronous_requests.ipynb
+    try:
+        # Optional argument: api_key=f"{os.getenv("LLM_API_KEY")}
+        client = AsyncOpenAI(base_url=f"{os.getenv('LLM_BASE_URL')}", api_key="123")
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{page_image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            temperature=0.2,
+            max_tokens=4096
+        )
+        return (page_num, response.choices[0].message.content)
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    
+    return False
+
 async def main():
     pdf_pages = convert_pdf_to_images_pymupdf(args.pdf_input)
     encoded_pages = encode_images(pdf_pages)
@@ -218,7 +266,7 @@ async def main():
     tasks = []
     for page_data in encoded_pages:
         task = asyncio.create_task(
-            call_gemini(page_data, "gemini-2.5-flash", PROMPT)
+            call_vllm(page_data, args.model_name, PROMPT)
         )
         tasks.append(task)
         
@@ -235,7 +283,7 @@ async def main():
     for page_num, response_text in results:
         #print(f"\n[Page {page_num}]")
         #print(response_text)
-        full_response_json.append({"page_num": page_num, "markdown": response_text})
+        full_response_json.append({"page_num": page_num, "markdown": response_text, "llm_model": args.model_name})
         full_response_str += response_text
 
     output_name = args.output_name

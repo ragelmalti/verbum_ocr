@@ -9,4 +9,6 @@ So far, Verbum is programmed to only use Google Gemini. I plan on making the too
 ```
 PROMPT_DIR=[INSERT_PROMPT_DIR_HERE]
 GOOGLE_GEMINI_API_KEY=[INSERT_GEMINI_API_KEY_HERE]
+LLM_BASE_URL=[INSERT_BASE_URL_HERE]
+LLM_API_KEY=[INSERT_API_KEY_HERE]
 ```
