@@ -10,6 +10,7 @@ import logging
 import os
 from typing import Any, Callable, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
 
 import pymupdf  # PyMuPDF, used to be called fitz
 from dotenv import load_dotenv
@@ -19,8 +20,10 @@ import google.genai as genai
 from google.genai import types
 from openai import AsyncOpenAI
 
+semaphore = asyncio.Semaphore(5)
+
 parser = argparse.ArgumentParser()
-parser.add_argument("--output_name", help="Name of the output files", type=str, required=True)
+parser.add_argument("--output_name", help="Name of the output files", type=str)
 parser.add_argument("--model_name", help="Name of the model to be used", type=str, required=True)
 parser.add_argument("pdf_input", help="PDF input to perform OCR on", type=str)
 args = parser.parse_args()
@@ -212,7 +215,7 @@ async def call_gemini(args: Tuple[int, str], model: str, prompt: str) -> Tuple[i
     except Exception as e:
         print(f"An error occurred: {e}")
     
-    return False
+    return "NULL"
 
 async def call_vllm(args: Tuple[int, str], model: str, prompt: str) -> Tuple[int, str]:
     """
@@ -227,35 +230,60 @@ async def call_vllm(args: Tuple[int, str], model: str, prompt: str) -> Tuple[int
         mime_type="image/png"
     )
     
+    client = AsyncOpenAI(base_url=f"{os.getenv('LLM_BASE_URL')}", api_key=f"{LLM_API_KEY}")
     # Asynchronous code adapted from:
     # https://github.com/google-gemini/cookbook/blob/main/quickstarts/Asynchronous_requests.ipynb
-    try:
-        # Optional argument: api_key=f"{os.getenv("LLM_API_KEY")}
-        client = AsyncOpenAI(base_url=f"{os.getenv('LLM_BASE_URL')}", api_key="123")
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{page_image_base64}"
+    max_retries = 10
+    retry_delay = 2 # Number of seconds before retrying
+    for attempt in range(1, max_retries + 1):
+        try:
+            # Optional argument: api_key=f"{os.getenv("LLM_API_KEY")}
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{page_image_base64}"
+                                }
                             }
-                        }
-                    ]
-                }
-            ],
-            temperature=0.2,
-            max_tokens=4096
-        )
-        return (page_num, response.choices[0].message.content)
-    except Exception as e:
-        print(f"An error occurred: {e}")
-    
-    return False
+                        ]
+                    }
+                ]
+                # OPTIONS COMMENTED OUT FOR CHATGPT
+                #temperature=0.2
+                #max_tokens=4096
+            )
+            token_count = {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens
+            }
+            content = response.choices[0].message.content
+            if not content:
+                  raise ValueError(f"{page_num}: Response content was None or empty")
+                
+            return (page_num, f"{content}", token_count)
+        except Exception as e:
+            print(f"[Attempt {attempt}/{max_retries}] Error: {e}")
+
+            if attempt < max_retries:
+                wait_time = retry_delay * attempt
+                print(f"Retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+            else:
+                print("Max retries reached. Returning NULL.")
+                return (page_num, "NULL", {})
+        
+        return (page_num, "NULL", {})
+
+async def call_vllm_with_semaphore(page_data, model_name, prompt):
+    async with semaphore:
+        return await call_vllm(page_data, model_name, prompt)
 
 async def main():
     pdf_pages = convert_pdf_to_images_pymupdf(args.pdf_input)
@@ -266,7 +294,7 @@ async def main():
     tasks = []
     for page_data in encoded_pages:
         task = asyncio.create_task(
-            call_vllm(page_data, args.model_name, PROMPT)
+            call_vllm_with_semaphore(page_data, args.model_name, PROMPT)
         )
         tasks.append(task)
         
@@ -280,17 +308,17 @@ async def main():
     # Output the results as JSON and Markdown
     full_response_str = ""
     full_response_json = []
-    for page_num, response_text in results:
-        #print(f"\n[Page {page_num}]")
-        #print(response_text)
-        full_response_json.append({"page_num": page_num, "markdown": response_text, "llm_model": args.model_name})
-        full_response_str += response_text
+    for page_num, response_text, token_count in results:
+        full_response_json.append({"page_num": page_num, "markdown": response_text, "token_count": token_count, "llm_model": args.model_name})
+        full_response_str += response_text + "\n"
 
-    output_name = args.output_name
-    with open(f"{output_name}.json", 'w', encoding='utf-8') as f:
+    #output_name = args.output_name
+    date = datetime.now().strftime("%Y-%m-%d-T%H%M%S")
+    output_name = f"{args.pdf_input.rstrip(".pdf")}_{date}"
+    with open(f"test_{output_name}.json", 'w', encoding='utf-8') as f:
         json.dump(full_response_json, f, indent=4)
     
-    with open(f"{output_name}.md", 'w', encoding='utf-8') as f:
+    with open(f"output_{output_name}.md", 'w', encoding='utf-8') as f:
         f.write(full_response_str)
 
 if __name__ == "__main__":

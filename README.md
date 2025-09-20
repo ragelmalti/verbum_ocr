@@ -3,7 +3,14 @@ OCR tool that leverages the power of LLMs to intelligently convert scanned PDF d
 
 Code adapted from [yigitkonur/llm-ocr](https://github.com/yigitkonur/llm-ocr)
 
-So far, Verbum is programmed to only use Google Gemini. I plan on making the tool more modular, so that other LLM models can be swapped out in place of Gemini.
+Utilises the OpenAPI Python library, to make requests to any LLM/VLM API utilising the OpenAPI specification.
+
+Examples include:
+- ChatGPT models via [OpenAPI Platform](https://platform.openai.com/docs/api-reference/responses/create)
+- [Google Gemini](https://ai.google.dev/gemini-api/docs/openai)
+- Models hosted with Ollama and vLLM. 
+
+A Jupiter Notebook called `Verbum_OCR_Setup.ipynb` is included providing instructions on how to configure VerbumOCR to use various LLM models
 
 `config.env` output:
 ```
