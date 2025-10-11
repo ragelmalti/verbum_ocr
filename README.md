@@ -19,3 +19,8 @@ GOOGLE_GEMINI_API_KEY=[INSERT_GEMINI_API_KEY_HERE]
 LLM_BASE_URL=[INSERT_BASE_URL_HERE]
 LLM_API_KEY=[INSERT_API_KEY_HERE]
 ```
+## Running the script
+Example:
+```bash
+$ python verbum_ocr.py --model_name gpt5 sample.pdf 
+```
