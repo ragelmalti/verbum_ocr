@@ -11,6 +11,7 @@ import os
 from typing import Any, Callable, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 
 import pymupdf  # PyMuPDF, used to be called fitz
 from dotenv import load_dotenv
@@ -24,6 +25,7 @@ semaphore = asyncio.Semaphore(5)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--output_name", help="Name of the output files", type=str)
+parser.add_argument("--output_path", help="Path where the files are output", type=str)
 parser.add_argument("--model_name", help="Name of the model to be used", type=str, required=True)
 parser.add_argument("pdf_input", help="PDF input to perform OCR on", type=str)
 args = parser.parse_args()
@@ -312,13 +314,21 @@ async def main():
         full_response_json.append({"page_num": page_num, "markdown": response_text, "token_count": token_count, "llm_model": args.model_name})
         full_response_str += response_text + "\n"
 
-    #output_name = args.output_name
+    if args.output_path:
+        output_path = Path(args.output_path)
+        output_path.mkdir(parents=True, exist_ok=True)
+    else:
+        output_path = Path('.')
+
     date = datetime.now().strftime("%Y-%m-%d-T%H%M%S")
-    output_name = f"{args.pdf_input.rstrip(".pdf")}_{date}"
-    with open(f"test_{output_name}.json", 'w', encoding='utf-8') as f:
+    output_name = f"{Path(args.pdf_input).name.rstrip(".pdf")}_{args.model_name}_{date}"
+
+    json_output_path = output_path / f"{output_name}.json"
+    with open(json_output_path, 'w', encoding='utf-8') as f:
         json.dump(full_response_json, f, indent=4)
     
-    with open(f"output_{output_name}.md", 'w', encoding='utf-8') as f:
+    md_output_path = output_path / f"{output_name}.md"
+    with open(md_output_path, 'w', encoding='utf-8') as f:
         f.write(full_response_str)
 
 if __name__ == "__main__":

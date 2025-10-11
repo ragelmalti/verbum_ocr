@@ -4,6 +4,7 @@
 import jiwer
 import argparse
 import json
+import re
 import difflib
 from difflib import SequenceMatcher
 from markdown_it import MarkdownIt
@@ -54,22 +55,50 @@ def read_markdown_file(file_path):
         data = file.read()
         return data
 
+def clean_markdown_output(markdown):
+    # Simple function that combines two words seperated by new line
+    lines = markdown.splitlines()
+    cleaned_output = ""
+    odd_len = len(lines) % 2
+    i = 0
+    while i < len(lines):
+        current_line = lines[i]
+        while current_line.endswith("-") and i + 1 < len(lines):
+            next_line = lines[i + 1]
+            current_line = current_line[:-1] + next_line 
+            i += 1  
+        cleaned_output += current_line + "\n"
+        
+        i += 1
+
+    return re.sub(r'[^a-zA-Z0-9 ]', '', cleaned_output).replace('\n', '').strip().lower()
+
 def extract_markdown_from_JSON(data):
     all_markdown = "\n".join(item["markdown"] for item in data)
     return all_markdown
 
-def extract_features(markdown_text):
+def extract_features(markdown_text, source):
     md = MarkdownIt()
     tokens = md.parse(markdown_text)
     features = []
-
     i = 0
     while i < len(tokens):
         token = tokens[i]
-
+        if token.type == "inline":
+            inline_content = []
+            k = 0
+            while k < len(token.children):
+                child = token.children[k]
+                if child.type == "em_open":
+                    features.append({"type": "italics", "content": token.children[k+1].content, "source": source})
+                elif child.type == "strong_open":
+                    features.append({"type": "bold", "content": token.children[k+1].content, "source": source})
+                elif child.type == "code_inline":
+                    features.append({"type": "code_inline", "content": token.children[k].content, "source": source})
+                k += 1
         if token.type == "heading_open":
             content = tokens[i+1].children[0].content if tokens[i+1].children else ""
-            features.append({"type": token.tag, "content": content})
+            features.append({"type": token.tag, "content": content, "source": source})
             i += 2 
         elif token.type == "bullet_list_open":
             items = []
@@ -82,13 +111,13 @@ def extract_features(markdown_text):
                     j += 4 
                 else:
                     j += 1
-            features.append({"type": "ul", "content": items})
+            features.append({"type": "ul", "content": items, "source": source})
             i = j + 1
         elif token.type == "fence":  # code block
-            features.append({"type": "code_block", "content": token.content})
+            features.append({"type": "code_block", "content": token.content, "source": source})
             i += 1
         elif token.type == "code_inline":
-            features.append({"type": "code_inline", "content": token.content})
+            features.append({"type": "code_inline", "content": token.content, "source": source})
             i += 1
         else:
             i += 1
@@ -134,11 +163,10 @@ def main():
     ground_truth = read_markdown_file(args.ground_truth)
     # return (prompt_token_count, completion_token_count, total_tokens, markdown)
     prompt_token_count, completion_token_count, total_tokens, ocr_markdown = get_test_data_statistics(json_input)
-    CER, WER = calculate_cer_and_wer(ground_truth, ocr_markdown)
+    CER, WER = calculate_cer_and_wer(clean_markdown_output(ground_truth), clean_markdown_output(ocr_markdown))
     
-    #generate_unified_diff(ground_truth, ocr_markdown)
-
-    c = compare_features(extract_features(ground_truth), extract_features(ocr_markdown))
+    generate_unified_diff(ground_truth, ocr_markdown)
+    c = compare_features(extract_features(ground_truth, "gt"), extract_features(ocr_markdown, "llm"))
     pretty_json = json.dumps(c, indent=4)
     print(pretty_json)
     print("=== Exact matches to the GT: ===")
@@ -150,6 +178,9 @@ def main():
     print(f"Total Input Tokens: {prompt_token_count}")
     print(f"Total Output Tokens: {completion_token_count}")
     print(f"Total Combined Tokens: {total_tokens}")
+
+    with open(f"forerunner_gemini_ocr.md", 'w', encoding='utf-8') as f:
+        f.write(ocr_markdown)
 
 
 if __name__ == "__main__":
