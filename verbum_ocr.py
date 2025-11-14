@@ -24,7 +24,7 @@ from openai import AsyncOpenAI
 semaphore = asyncio.Semaphore(5)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--output_name", help="Name of the output files", type=str)
+parser.add_argument("--output_name", help="Name of the output files", type=str) #TODO: REMOVE THIS!!!
 parser.add_argument("--output_path", help="Path where the files are output", type=str)
 parser.add_argument("--model_name", help="Name of the model to be used", type=str, required=True)
 parser.add_argument("pdf_input", help="PDF input to perform OCR on", type=str)
@@ -219,10 +219,10 @@ async def call_gemini(args: Tuple[int, str], model: str, prompt: str) -> Tuple[i
     
     return "NULL"
 
-async def call_vllm(args: Tuple[int, str], model: str, prompt: str) -> Tuple[int, str]:
+async def call_llm(args: Tuple[int, str], model: str, prompt: str) -> Tuple[int, str]:
     """
-    Call model hosted on vLLM
-    Using the OpenAI Python library to call locally hosted models
+    Call model via the LLM_BASE_URL environment variable
+    Using the OpenAI Python library to call the LLM/VLM
     """
     # DO ERROR CHECKING TO ENSURE THAT MODEL IS IN MODELS!
     page_num, page_image_base64 = args
@@ -239,7 +239,6 @@ async def call_vllm(args: Tuple[int, str], model: str, prompt: str) -> Tuple[int
     retry_delay = 2 # Number of seconds before retrying
     for attempt in range(1, max_retries + 1):
         try:
-            # Optional argument: api_key=f"{os.getenv("LLM_API_KEY")}
             response = await client.chat.completions.create(
                 model=model,
                 messages=[
@@ -256,9 +255,6 @@ async def call_vllm(args: Tuple[int, str], model: str, prompt: str) -> Tuple[int
                         ]
                     }
                 ]
-                # OPTIONS COMMENTED OUT FOR CHATGPT
-                #temperature=0.2
-                #max_tokens=4096
             )
             token_count = {
                 "prompt_tokens": response.usage.prompt_tokens,
@@ -283,20 +279,18 @@ async def call_vllm(args: Tuple[int, str], model: str, prompt: str) -> Tuple[int
         
         return (page_num, "NULL", {})
 
-async def call_vllm_with_semaphore(page_data, model_name, prompt):
+async def call_llm_with_semaphore(page_data, model_name, prompt):
     async with semaphore:
-        return await call_vllm(page_data, model_name, prompt)
+        return await call_llm(page_data, model_name, prompt)
 
 async def main():
     pdf_pages = convert_pdf_to_images_pymupdf(args.pdf_input)
     encoded_pages = encode_images(pdf_pages)
 
-    # TODO: Write code that is able to swap out the `call_gemini` function, for different models!
-    # Might have to write an adapter of some kind!
     tasks = []
     for page_data in encoded_pages:
         task = asyncio.create_task(
-            call_vllm_with_semaphore(page_data, args.model_name, PROMPT)
+            call_llm_with_semaphore(page_data, args.model_name, PROMPT)
         )
         tasks.append(task)
         
